@@ -1,0 +1,14 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+pgvector==0.2.4
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+# For Hybrid Search & Reranking
+sentence-transformers==2.3.1
+# For "Smart Chunking"
+beautifulsoup4==4.12.3
+pypdf==4.0.1
+# HTTP Client
+requests==2.31.0
