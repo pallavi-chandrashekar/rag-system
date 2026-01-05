@@ -1,10 +1,3 @@
-Here is the updated **README.md**. I have added **"Contextual Query Rewriting"** as a prominent feature in the *Key Features* section and integrated it into the *Architecture* workflow to clearly show where it fits (before the Retrieval Service).
-
-You can copy and paste this directly.
-
----
-
-```markdown
 # Enterprise RAG Platform
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
