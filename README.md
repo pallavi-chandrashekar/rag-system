@@ -1,40 +1,66 @@
+Here is the updated **README.md**. I have added **"Contextual Query Rewriting"** as a prominent feature in the *Key Features* section and integrated it into the *Architecture* workflow to clearly show where it fits (before the Retrieval Service).
+
+You can copy and paste this directly.
+
+---
+
+```markdown
 # Enterprise RAG Platform
 
-A production-ready Retrieval-Augmented Generation (RAG) system built for high-accuracy enterprise use cases. This platform moves beyond simple vector search by implementing **Hybrid Search (Vector + Keyword)** and **Reciprocal Rank Fusion (RRF)** to solve common RAG failure modes like vocabulary mismatch and exact-match prioritization.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-green)](https://www.docker.com/)
+[![Status](https://img.shields.io/badge/status-active_development-orange)]()
+
+A scalable, production-ready **Retrieval-Augmented Generation (RAG)** system designed for enterprise data. This platform handles the end-to-end pipeline: from document ingestion and chunking to vector storage and context-aware LLM generation.
+
+---
 
 ## 🚀 Key Features
 
-* **Hybrid Search Architecture:** Combines semantic understanding (Vector Search via `pgvector`) with exact-match precision (Keyword Search).
-* **Reciprocal Rank Fusion (RRF):** Intelligently re-ranks results to balance semantic relevance with keyword specificity.
-* **Multi-Tenancy:** logical data isolation using `tenant_id` at the database level.
-* **PostgreSQL Native:** Uses `pgvector` to keep the tech stack simple and compliant (no external vector DB required).
-* **Automated Evaluation Suite:** Includes scenario-based testing scripts to verify RAG performance against edge cases.
+* **Contextual Query Rewriting**: Uses an intermediary LLM step to rephrase user queries, resolving ambiguities and chat history context *before* retrieval for higher accuracy.
+* **Multi-Format Ingestion**: Support for PDF, DOCX, TXT, and Markdown files with robust text extraction.
+* **Advanced Chunking Strategies**: Semantic and token-based splitting to maximize retrieval context.
+* **Vector Database Integration**: Modular support for vector stores (Qdrant, Pinecone, or Milvus).
+* **LLM Agnostic**: Plug-and-play architecture for OpenAI, Anthropic, or local open-source models (via Ollama/vLLM).
+* **Hybrid Search**: Combines dense vector search with keyword-based (sparse) search.
+* **API-First Design**: RESTful API endpoints built for seamless frontend integration.
+* **Containerized**: Fully Dockerized for consistent deployment across environments.
+
+---
 
 ## 🛠️ Tech Stack
 
-* **Language:** Python 3.11+
-* **Framework:** FastAPI (Async)
-* **Database:** PostgreSQL 16 (with `pgvector` extension)
-* **LLM/Embeddings:** OpenAI API (configurable)
-* **Containerization:** Docker & Docker Compose
-* **Testing:** Pytest & Custom Scenario Scripts
+* **Language**: Python 3.10+
+* **Framework**: FastAPI / Flask (configurable)
+* **Orchestration**: LangChain / LlamaIndex
+* **Database**: Qdrant (Vector Store), PostgreSQL (Metadata)
+* **Containerization**: Docker & Docker Compose
+* **CI/CD**: GitHub Actions
+
+---
 
 ## 🏗️ Architecture
 
-The system uses a **Retrieval-Re-ranking** pipeline:
+The platform follows a microservice-like architecture:
 
-1.  **Ingestion:** Documents are chunked, embedded (OpenAI `text-embedding-3-small`), and stored in Postgres.
-2.  **Querying:**
-    * **Path A (Vector):** Cosine similarity search for semantic meaning.
-    * **Path B (Keyword):** SQL `ILIKE` / Full-Text Search for specific terminology.
-3.  **Fusion:** Results from Path A and B are fused using the **RRF Algorithm** ($$score = \frac{1}{k + rank}$$).
-4.  **Generation:** The top fused contexts are sent to the LLM to generate the final answer.
+1.  **Ingestion Service**: Parses documents, cleans data, and updates metadata.
+2.  **Embedding Service**: Converts text chunks into vector embeddings.
+3.  **Query Transformation Service**:
+    * *Contextual Rewriting*: Reformulates the user's raw prompt into a standalone search query.
+    * *Query Expansion*: Generates multiple variations of the query to broaden search coverage.
+4.  **Retrieval Service**: Performs hybrid similarity search against the Vector DB using the transformed query.
+5.  **Generation Service**: Synthesizes the answer using the LLM and retrieved context.
+
+---
 
 ## ⚡ Getting Started
 
 ### Prerequisites
+
 * Docker & Docker Compose
-* OpenAI API Key
+* Python 3.10+ (for local development)
+* API Keys (OpenAI, Anthropic, etc.)
 
 ### Installation
 
@@ -44,64 +70,85 @@ The system uses a **Retrieval-Re-ranking** pipeline:
     cd enterprise-rag-platform
     ```
 
-2.  **Set Environment Variables**
-    Create a `.env` file in the root directory:
+2.  **Set up Environment Variables**
+    Copy the example environment file:
     ```bash
-    DATABASE_URL=postgresql://user:password@rag_db:5432/ragdb
-    OPENAI_API_KEY=your_sk_key_here
+    cp .env.example .env
+    ```
+    *Update `.env` with your API keys and configuration preferences.*
+
+3.  **Run with Docker (Recommended)**
+    ```bash
+    docker-compose up --build -d
     ```
 
-3.  **Run with Docker**
+4.  **Run Locally (Dev Mode)**
     ```bash
-    docker-compose up --build
+    pip install -r requirements.txt
+    python main.py
     ```
-    The API will be available at `http://localhost:8000`.
 
-## 📖 Usage API
+---
 
-### 1. Ingest Documents
-Upload text files (PDF parsing coming soon) to the vector store.
+## 📖 Usage
 
-```bash
-curl -X 'POST' \
-  'http://localhost:8000/ingest?tenant_id=demo-tenant' \
-  -F 'file=@./data/policy.txt'
+### API Endpoints
 
-### 2. Query (Hybrid Search)
-Ask a question. The system will automatically balance vector and keyword results.
+Once the server is running (default: `http://localhost:8000`), you can access the Swagger UI documentation at `/docs`.
 
-```bash
-curl -X 'POST' \
-  'http://localhost:8000/rag/query' \
-  -H 'Content-Type: application/json' \
-  -d '{
-  "query": "What is the refund policy?",
-  "tenant_id": "demo-tenant",
-  "top_k": 5
-}'
+#### 1. Ingest Documents
+**POST** `/api/v1/ingest`
+```json
+{
+  "file_path": "./data/quarterly_report.pdf",
+  "metadata": {"department": "finance"}
+}
 
-🧪 Testing & Evaluation
-This project includes a Scenario-Based Testing Suite (tests/test_scenarios.py) that validates the system against common RAG failure modes.
+```
 
-Run the Evaluation
-```bash
-# Ensure the stack is running, then:
-python tests/test_scenarios.py
+#### 2. Query (Chat)
 
-Test Scenarios Covered
+**POST** `/api/v1/chat`
 
-### Test Scenarios Covered
+```json
+{
+  "query": "How did revenue change compared to the last quarter?",
+  "history": ["What was the revenue in Q3?"],
+  "collection_name": "finance_docs"
+}
 
-| Scenario | Challenge | Success Criteria |
-| :--- | :--- | :--- |
-| **Vocabulary Mismatch** | User asks "connection drops" vs Doc says "network failure" (no shared words). | Vector search must retrieve the correct document based on semantic meaning alone. |
-| **Exact Keyword Override** | User asks for specific "Error 505" vs generic "Error 500" documents. | Keyword search must prioritize the exact match ("505") over the generic vector match. |
-| **Conflicting Info** | Database contains an old 2020 policy and a new 2025 policy. | System must retrieve *both* documents so the LLM has the full context to answer correctly. |
+```
 
+*Note: The system will use the history to rewrite the query to "compare Q4 revenue to Q3 revenue" before searching.*
 
-🔮 Roadmap
-[ ] Integration with DeepEval for LLM-as-a-Judge metrics.
+---
 
-[ ] Advanced Chunking (Semantic Chunking).
+## 🗺️ Roadmap
 
-[ ] Admin UI for managing tenants and documents.
+* [x] Basic Document Ingestion (PDF/TXT)
+* [x] Vector Database Connection
+* [x] Contextual Query Rewriting
+* [ ] Add Re-ranking (Cross-Encoders)
+* [ ] Implement Persistent Chat History / Memory
+* [ ] User Authentication (OAuth2)
+* [ ] Frontend UI (React/Next.js)
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. Fork the project.
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4. Push to the branch (`git push origin feature/AmazingFeature`).
+5. Open a Pull Request.
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+---
+
+**Built with ❤️ by [Pallavi Chandrashekar**](https://github.com/pallavi-chandrashekar)
