@@ -5,6 +5,7 @@ psycopg2-binary==2.9.9
 pgvector==0.2.4
 pydantic-settings==2.1.0
 python-multipart==0.0.6
+openai>=1.0.0
 # For Hybrid Search & Reranking
 sentence-transformers==2.3.1
 # For "Smart Chunking"

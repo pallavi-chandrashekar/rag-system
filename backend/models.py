@@ -11,9 +11,9 @@ class Document(Base):
     __tablename__ = "documents"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(String, nullable=False, index=True)  # The Security Boundary
+    tenant_id = Column(String, nullable=False, index=True)
     filename = Column(String, nullable=False)
-    status = Column(String, default="PENDING")  # PENDING, PROCESSED, FAILED
+    status = Column(String, default="PENDING")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Chunk(Base):
@@ -21,18 +21,19 @@ class Chunk(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"))
-    tenant_id = Column(String, nullable=False, index=True)  # Redundant but critical for RLS speed
+    tenant_id = Column(String, nullable=False, index=True)
     
     content = Column(Text, nullable=False)
-    
-    # The Hybrid Search Secret Sauce:
-    # 1. Dense Vector (e.g., 1536 dims for OpenAI)
     embedding = Column(Vector(1536))
-    
-    # 2. Metadata for Filtering
     metadata_ = Column("metadata", JSONB)
 
-    # Index for speed
+    # FIXED: Added 'postgresql_ops' to specify Cosine Distance
     __table_args__ = (
-        Index('ix_chunks_embedding', 'embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}),
+        Index(
+            'ix_chunks_embedding', 
+            'embedding', 
+            postgresql_using='hnsw', 
+            postgresql_with={'m': 16, 'ef_construction': 64},
+            postgresql_ops={'embedding': 'vector_cosine_ops'}
+        ),
     )

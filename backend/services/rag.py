@@ -44,14 +44,16 @@ def _rrf_fusion(vector_results, keyword_results, k=60):
     for rank, row in enumerate(vector_results):
         doc_id = row.id
         if doc_id not in scores:
-            scores[doc_id] = {"content": row.content, "score": 0}
+            # Add "id": doc_id here
+            scores[doc_id] = {"id": doc_id, "content": row.content, "score": 0} 
         scores[doc_id]["score"] += 1 / (k + rank + 1)
         
     # Process Keyword Ranks
     for rank, row in enumerate(keyword_results):
         doc_id = row.id
         if doc_id not in scores:
-            scores[doc_id] = {"content": row.content, "score": 0}
+            # Add "id": doc_id here
+            scores[doc_id] = {"id": doc_id, "content": row.content, "score": 0}
         scores[doc_id]["score"] += 1 / (k + rank + 1)
     
     # Sort by accumulated score
