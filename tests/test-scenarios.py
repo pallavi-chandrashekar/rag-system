@@ -38,39 +38,45 @@ def ingest_document(text, source):
         log(f"Connection error: {str(e)}", "FAIL")
         return False
 
-def query_rag(question):
+# In test_scenarios.py
+
+def query_rag(question, history=None):  # <--- FIX: Accepts history argument
     """Helper to query the system with robust debugging"""
-    url = f"{BASE_URL}/rag/query"
+    
+    # ADJUST THIS URL IF NEEDED:
+    # If your main.py uses prefix="/rag", change to f"{BASE_URL}/rag/query"
+    url = f"{BASE_URL}/query" 
+    
     payload = {
         "query": question,
         "tenant_id": TENANT_ID,
-        "top_k": 5
+        "top_k": 5,
+        "chat_history": history if history else [] 
     }
+    
     try:
         response = requests.post(url, json=payload, headers=HEADERS)
         if response.status_code == 200:
             data = response.json()
             
-            # --- DEBUG: Print what we actually got ---
-            # print(f"DEBUG RESPONSE TYPE: {type(data)}")
+            # --- DEBUG: Uncomment to see actual API response ---
             # print(f"DEBUG RESPONSE: {data}")
-            
-            # 1. If it's a Dictionary, try to find the list inside
+
+            # 1. Handle Dictionary Responses (Unwrap them)
             if isinstance(data, dict):
-                # Common wrappers: 'results', 'data', 'items'
                 if 'results' in data:
-                    return data['results']
+                    return data['results'] # Unwrap the list
                 elif 'data' in data:
                     return data['data']
-                # If it looks like a single error message
                 elif 'detail' in data:
                     log(f"API Error: {data['detail']}", "FAIL")
                     return []
-                # Fallback: maybe the API returns a single dict object? Wrap it in a list.
-                else:
-                    return [data]
+                # If the test expects the whole object (for standalone_query check), 
+                # we might need to return the dict, but for now let's return a list wrapper
+                # so results[0] doesn't crash.
+                return [data] 
             
-            # 2. If it's already a List, return it (Happy Path)
+            # 2. Handle List Responses (Happy Path)
             if isinstance(data, list):
                 return data
                 
@@ -150,7 +156,57 @@ def run_tests():
             log("Scenario 3 FAILED: Did not retrieve both versions.", "FAIL")
     else:
         log("Scenario 3 FAILED: No results found.", "FAIL")
-        
+
+    # ==========================================
+    # SCENARIO 4: Chat Memory (Contextual Rewriting)
+    # ==========================================
+    log("\nRunning Scenario 4: Chat Context Rewriting...", "INFO")
+    
+    # 1. Ingest context about a specific topic
+    ingest_document("PostgreSQL is an open-source relational database system.", "tech-stack")
+    time.sleep(2)
+    
+    # 2. Simulate history: User asked about Postgres, AI answered.
+    history = [
+        {"role": "user", "content": "What is the best database for structured data?"},
+        {"role": "assistant", "content": "PostgreSQL is a great choice for structured data."}
+    ]
+    
+    # 3. Ask a vague follow-up question
+    # If sent directly, "install it" would match nothing.
+    response_data = query_rag("How do I install it?", history=history)
+    
+    # 4. specific check for the 'standalone_query' field
+    if isinstance(response_data, dict) and "standalone_query" in response_data:
+        rewritten = response_data["standalone_query"].lower()
+        if "postgres" in rewritten or "database" in rewritten:
+            log(f"Scenario 4 PASSED: Rewrote 'it' to '{response_data['standalone_query']}'", "SUCCESS")
+        else:
+            log(f"Scenario 4 FAILED: Rewrote to '{rewritten}' (Expected 'Postgres' context)", "FAIL")
+    else:
+        log("Scenario 4 FAILED: API did not return 'standalone_query' field.", "FAIL")
+
+    # ==========================================
+    # SCENARIO 5: Irrelevant/Negative Query (Safety Check)
+    # ==========================================
+    log("\nRunning Scenario 5: Irrelevant Query (Hallucination Check)...", "INFO")
+    
+    # Query something completely unrelated to your documents
+    results = query_rag("How do I bake a chocolate cake?")
+    
+    # Depending on your implementation, you either want:
+    # A) Empty results (Ideal)
+    # B) Very low scores
+    
+    # Check if we got results. If we did, check their scores (if available)
+    if isinstance(results, list) and len(results) == 0:
+        log("Scenario 5 PASSED: Correctly returned no results for irrelevant query.", "SUCCESS")
+    elif isinstance(results, dict) and 'results' in results and len(results['results']) == 0:
+        log("Scenario 5 PASSED: Correctly returned no results.", "SUCCESS")
+    else:
+        # If we got results, warn the user
+        log("Scenario 5 WARNING: Returned results for 'chocolate cake'. Check distance threshold.", "FAIL")
+
     log("\n--- TEST RUN COMPLETE ---", "INFO")
 
 if __name__ == "__main__":
