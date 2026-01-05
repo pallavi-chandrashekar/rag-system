@@ -99,18 +99,26 @@ Once the server is running (default: `http://localhost:8000`), you can access th
 
 ```
 
-#### 2. Query (Chat)
-
+#### 2. Query (Chat) with Strategies
 **POST** `/api/v1/chat`
+
+You can now specify a search strategy to optimize retrieval for different types of questions.
 
 ```json
 {
-  "query": "How did revenue change compared to the last quarter?",
-  "history": ["What was the revenue in Q3?"],
-  "collection_name": "finance_docs"
+  "query": "Compare the Q3 and Q4 revenue reports",
+  "collection_name": "finance_docs",
+  "strategy": "decomposition" 
 }
 
 ```
+
+| Strategy | Best For | Description |
+| :--- | :--- | :--- |
+| `simple` | Simple lookups | Standard hybrid search (Vector + Keyword). Default. |
+| `multi_query` | Broad topics | Generates 3 variations of the question to catch synonyms. |
+| `decomposition` | Complex comparisons | Breaks one complex question into sub-questions (e.g., "Compare X and Y" becomes "What is X?", "What is Y?"). |
+| `hyde` | Technical/Fact-finding | Generates a hypothetical answer first, then searches for matching vector patterns. |
 
 *Note: The system will use the history to rewrite the query to "compare Q4 revenue to Q3 revenue" before searching.*
 

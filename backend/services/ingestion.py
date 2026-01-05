@@ -25,9 +25,7 @@ async def process_document(file: UploadFile, tenant_id: str, db: Session):
     # 3. Embed
     embeddings = get_embeddings(text_chunks)
     
-    # 4. Save (Removed 'doc_id' to match your DB schema)
-    # We use a generated UUID for the record ID, but skip the separate doc_id column
-    
+    # 4. Save
     for i, chunk in enumerate(text_chunks):
         embedding_vector = str(embeddings[i]) 
         
@@ -46,3 +44,13 @@ async def process_document(file: UploadFile, tenant_id: str, db: Session):
     
     db.commit()
     return "success"
+
+def delete_tenant_data(tenant_id: str, db: Session):
+    """Deletes all chunks associated with a specific tenant_id."""
+    try:
+        query = text("DELETE FROM chunks WHERE tenant_id = :tenant_id")
+        db.execute(query, {"tenant_id": tenant_id})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
