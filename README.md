@@ -1,155 +1,170 @@
-# Enterprise RAG Platform
+# 🏢 Multi-Tenant Enterprise RAG Platform
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
-[![Docker](https://img.shields.io/badge/docker-ready-green)](https://www.docker.com/)
-[![Status](https://img.shields.io/badge/status-active_development-orange)]()
+A production-ready, multi-tenant Retrieval-Augmented Generation (RAG) system built with **FastAPI**, **React**, **PostgreSQL (pgvector)**, and **OpenAI**.
 
-A scalable, production-ready **Retrieval-Augmented Generation (RAG)** system designed for enterprise data. This platform handles the end-to-end pipeline: from document ingestion and chunking to vector storage and context-aware LLM generation.
+This platform features an **Agentic Router** that automatically detects user intent (Greetings vs. Summarization vs. Deep Search) and supports full **Chat Session Management** with strict data isolation between tenants.
 
----
+![Project Status](https://img.shields.io/badge/status-production--ready-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
-## 🚀 Key Features
+## ✨ Key Features
 
-* **Contextual Query Rewriting**: Uses an intermediary LLM step to rephrase user queries, resolving ambiguities and chat history context *before* retrieval for higher accuracy.
-* **Multi-Format Ingestion**: Support for PDF, DOCX, TXT, and Markdown files with robust text extraction.
-* **Advanced Chunking Strategies**: Semantic and token-based splitting to maximize retrieval context.
-* **Vector Database Integration**: Modular support for vector stores (Qdrant, Pinecone, or Milvus).
-* **LLM Agnostic**: Plug-and-play architecture for OpenAI, Anthropic, or local open-source models (via Ollama/vLLM).
-* **Hybrid Search**: Combines dense vector search with keyword-based (sparse) search.
-* **API-First Design**: RESTful API endpoints built for seamless frontend integration.
-* **Containerized**: Fully Dockerized for consistent deployment across environments.
+### 🧠 Intelligent Agent (Auto-Router)
+- **Intent Detection:** Automatically classifies queries into strategies:
+  - `LLM_ONLY`: For greetings and general knowledge (e.g., "Hi", "What is Python?").
+  - `SUMMARY`: Bypasses vector search to read raw document chunks for full overviews.
+  - `SEARCH`: Performs vector similarity search for specific questions.
+- **Fail-Safe Fallback:** If the vector database returns zero results, the system automatically falls back to the LLM's general knowledge.
 
----
+### 🔐 Enterprise Security
+- **Multi-Tenancy:** Strict data isolation. `Tenant A` cannot access documents or chat history belonging to `Tenant B`.
+- **Tenant Scoping:** All API requests are scoped via the `X-Tenant-ID` header.
 
-## 🛠️ Tech Stack
+### 📂 Advanced Ingestion
+- **PDF Parsing:** Integrated `pypdf` extraction to handle complex PDF layouts.
+- **Smart Chunking:** Sentence-aware text splitting (`RecursiveCharacterTextSplitter` logic) to preserve semantic context.
 
-* **Language**: Python 3.10+
-* **Framework**: FastAPI / Flask (configurable)
-* **Orchestration**: LangChain / LlamaIndex
-* **Database**: Qdrant (Vector Store), PostgreSQL (Metadata)
-* **Containerization**: Docker & Docker Compose
-* **CI/CD**: GitHub Actions
+### 💬 Session Management
+- **Persistent History:** Conversations are saved to PostgreSQL (`chat_sessions` table).
+- **Context Menu:** Right-click sidebar items to **Rename** or **Delete** specific chat sessions.
+- **Auto-Restore:** Automatically loads the most recent conversation upon browser refresh.
 
 ---
 
 ## 🏗️ Architecture
 
-The platform follows a microservice-like architecture:
+The system uses a **Router-Based RAG** architecture. The "Brain" (Router) decides the best tool for the job before any search happens.
 
-1.  **Ingestion Service**: Parses documents, cleans data, and updates metadata.
-2.  **Embedding Service**: Converts text chunks into vector embeddings.
-3.  **Query Transformation Service**:
-    * *Contextual Rewriting*: Reformulates the user's raw prompt into a standalone search query.
-    * *Query Expansion*: Generates multiple variations of the query to broaden search coverage.
-4.  **Retrieval Service**: Performs hybrid similarity search against the Vector DB using the transformed query.
-5.  **Generation Service**: Synthesizes the answer using the LLM and retrieved context.
+```mermaid
+graph TD
+    %% -- Client Layer --
+    User[User / React UI] -->|Sends Query + TenantID| API[FastAPI Backend]
 
----
+    %% -- Application Layer --
+    subgraph Backend Services
+        API --> Router{Router Agent}
+        
+        %% Strategy 1: General Chat
+        Router -- "Hi / General" --> LLM_Only[LLM Direct Chat]
+        
+        %% Strategy 2: Summarization
+        Router -- "Summarize" --> DB_Raw[Fetch Raw Content]
+        DB_Raw --> LLM_Sum[LLM Summarizer]
+        
+        %% Strategy 3: Search (RAG)
+        Router -- "Complex Query" --> Embed[Embedding Model]
+        Embed --> VectorSearch[Vector Search]
+        VectorSearch --> Rerank[Context Assembly]
+        Rerank --> LLM_RAG[LLM Answer Gen]
+    end
 
-## ⚡ Getting Started
+    %% -- Data Layer --
+    subgraph Database [PostgreSQL]
+        VectorDB[(pgvector: Chunks)]
+        SessionDB[(Table: Chat_Sessions)]
+    end
 
-### Prerequisites
+    %% -- Connections --
+    VectorSearch <--> VectorDB
+    DB_Raw <--> VectorDB
+    
+    %% -- History Management --
+    API -->|Save History| SessionDB
+    SessionDB -->|Load History| API
 
-* Docker & Docker Compose
-* Python 3.10+ (for local development)
-* API Keys (OpenAI, Anthropic, etc.)
-
-### Installation
-
-1.  **Clone the repository**
-    ```bash
-    git clone [https://github.com/pallavi-chandrashekar/enterprise-rag-platform.git](https://github.com/pallavi-chandrashekar/enterprise-rag-platform.git)
-    cd enterprise-rag-platform
-    ```
-
-2.  **Set up Environment Variables**
-    Copy the example environment file:
-    ```bash
-    cp .env.example .env
-    ```
-    *Update `.env` with your API keys and configuration preferences.*
-
-3.  **Run with Docker (Recommended)**
-    ```bash
-    docker-compose up --build -d
-    ```
-
-4.  **Run Locally (Dev Mode)**
-    ```bash
-    pip install -r requirements.txt
-    python main.py
-    ```
-
----
-
-## 📖 Usage
-
-### API Endpoints
-
-Once the server is running (default: `http://localhost:8000`), you can access the Swagger UI documentation at `/docs`.
-
-#### 1. Ingest Documents
-**POST** `/api/v1/ingest`
-```json
-{
-  "file_path": "./data/quarterly_report.pdf",
-  "metadata": {"department": "finance"}
-}
+    %% -- External AI --
+    LLM_Only <--> OpenAI
+    LLM_Sum <--> OpenAI
+    LLM_RAG <--> OpenAI
 
 ```
 
-#### 2. Query (Chat) with Strategies
-**POST** `/api/v1/chat`
+---
 
-You can now specify a search strategy to optimize retrieval for different types of questions.
+## 🛠️ Tech Stack
 
-```json
-{
-  "query": "Compare the Q3 and Q4 revenue reports",
-  "collection_name": "finance_docs",
-  "strategy": "decomposition" 
-}
+| Component | Technology | Description |
+| --- | --- | --- |
+| **Frontend** | React + Vite | Fast, modern UI with Sidebar and Context Menus. |
+| **Backend** | FastAPI (Python) | High-performance async API. |
+| **Database** | PostgreSQL | Relational data + `pgvector` for embeddings. |
+| **ORM** | SQLAlchemy | Database interaction and model management. |
+| **AI / LLM** | OpenAI GPT-4o | Intelligence layer (Routing & Generation). |
+| **Ingestion** | pypdf | Robust PDF text extraction. |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Prerequisites
+
+* **Docker** & **Docker Compose** installed.
+* An **OpenAI API Key**.
+
+### 2. Configuration
+
+Create a `.env` file or update your `docker-compose.yml` directly:
+
+```yaml
+services:
+  rag-backend:
+    environment:
+      - DATABASE_URL=postgresql://user:password@rag-db:5432/ragdb
+      - OPENAI_API_KEY=sk-proj-YOUR-ACTUAL-KEY-HERE  # <--- Required
 
 ```
 
-| Strategy | Best For | Description |
-| :--- | :--- | :--- |
-| `simple` | Simple lookups | Standard hybrid search (Vector + Keyword). Default. |
-| `multi_query` | Broad topics | Generates 3 variations of the question to catch synonyms. |
-| `decomposition` | Complex comparisons | Breaks one complex question into sub-questions (e.g., "Compare X and Y" becomes "What is X?", "What is Y?"). |
-| `hyde` | Technical/Fact-finding | Generates a hypothetical answer first, then searches for matching vector patterns. |
+### 3. Build & Run
 
-*Note: The system will use the history to rewrite the query to "compare Q4 revenue to Q3 revenue" before searching.*
+```bash
+# Stop any existing containers
+docker-compose down
 
----
+# Build and start the system
+docker-compose up -d --build
 
-## 🗺️ Roadmap
+```
 
-* [x] Basic Document Ingestion (PDF/TXT)
-* [x] Vector Database Connection
-* [x] Contextual Query Rewriting
-* [ ] Add Re-ranking (Cross-Encoders)
-* [ ] Implement Persistent Chat History / Memory
-* [ ] User Authentication (OAuth2)
-* [ ] Frontend UI (React/Next.js)
+### 4. Access the App
+
+* **Frontend:** [http://localhost:5173](https://www.google.com/search?q=http://localhost:5173)
+* **API Documentation:** [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
 
 ---
 
-## 🤝 Contributing
+## 📖 Usage Guide
 
-Contributions are welcome! Please follow these steps:
+### 1. Managing Tenants
 
-1. Fork the project.
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
+* Enter a **Tenant ID** (e.g., `demo-corp`) in the sidebar.
+* The system creates a virtual wall; documents uploaded here are invisible to other Tenant IDs.
 
-## 📄 License
+### 2. Ingesting Documents
 
-Distributed under the MIT License. See `LICENSE` for more information.
+* Click the **"Upload File"** area in the sidebar.
+* Select a `.pdf` or `.txt` file.
+* The system parses, chunks, embeds, and stores it in seconds.
+
+### 3. Chat Modes
+
+* **General Chat:** Type *"Hi"* or *"How are you?"*. The Agent skips the database and replies instantly.
+* **Summarization:** Type *"Summarize this document"*. The Agent pulls raw text chunks and generates a summary.
+* **Deep Search:** Ask a specific question (e.g., *"What is the revenue for Q3?"*). The Agent performs a vector search.
+
+### 4. Managing Sessions
+
+* **New Chat:** Click the `+ New Chat` button to start fresh.
+* **Rename:** Right-click a chat in the history list -> Select **Rename**.
+* **Delete:** Right-click a chat -> Select **Delete** to wipe it from the database.
 
 ---
 
-**Built with ❤️ by [Pallavi Chandrashekar**](https://github.com/pallavi-chandrashekar)
+## 🔮 Future Roadmap
+
+* [ ] **Authentication:** Replace manual Tenant ID entry with JWT Login.
+* [ ] **OCR Support:** Integrate `pytesseract` for scanned image PDFs.
+* [ ] **Streaming:** Implement Server-Sent Events (SSE) for typewriter-style responses.
+* [ ] **File Filtering:** Allow users to chat with a *specific* file only.
+
+## 🛡️ License
+
+This project is licensed under the MIT License.
