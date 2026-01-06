@@ -1,20 +1,23 @@
-import os
-from typing import List
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 
-# Simple singleton wrapper
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Load the local model (384 dimensions)
+# It downloads automatically on the first run
+print("Loading Local Embedding Model (all-MiniLM-L6-v2)...")
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-def get_embeddings(texts: List[str], model="text-embedding-3-small") -> List[List[float]]:
+def get_embeddings(texts: list) -> list:
     """
-    Generates embeddings for a list of texts.
-    replace with HuggingFace implementation if you want to run locally.
+    Generates embeddings locally using the CPU/GPU.
+    Returns: List of Lists (e.g., [[0.1, ...], [0.3, ...]])
     """
     if not texts:
         return []
         
-    # OpenAI requires stripping newlines for best results
+    # Clean newlines just in case
     cleaned_texts = [t.replace("\n", " ") for t in texts]
     
-    response = client.embeddings.create(input=cleaned_texts, model=model)
-    return [data.embedding for data in response.data]
+    # Generate embeddings
+    embeddings = model.encode(cleaned_texts)
+    
+    # Convert numpy array to standard Python list for JSON serialization
+    return embeddings.tolist()

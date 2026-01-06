@@ -16,10 +16,12 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
-COPY backend/ /app/backend/
+# --- FIX ---
+# Since the build context is already inside 'backend/', we copy '.' (current dir)
+# into '/app/backend/' so that Python can find the 'backend.main' module.
+COPY . /app/backend/
 
-# Set python path so 'backend.main' works
+# Set python path so imports like 'from backend.services' work
 ENV PYTHONPATH=/app
 
 # Run the application

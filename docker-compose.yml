@@ -1,34 +1,42 @@
-version: '3.8'
 
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: rag_db
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: rag_platform
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      # Initialize the extension automatically
-      - ./db-init.sql:/docker-entrypoint-initdb.d/init.sql
-
-  api:
-    build: 
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: rag_api
+  # --- Backend Service ---
+  backend:
+    build: ./backend        # Sets the context to the backend folder
+    container_name: rag-backend
     ports:
       - "8000:8000"
+    env_file: .env          # Ensures the container gets your keys
     environment:
-      DATABASE_URL: postgresql://admin:password@db:5432/rag_platform
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://user:password@db:5432/ragdb
     depends_on:
       - db
     volumes:
-      - ./backend:/app/backend
+      - ./backend:/app/backend  # Maps local files to container for hot-reloading
+
+  # --- Frontend Service (NEW) ---
+  frontend:
+    build: ./frontend
+    container_name: rag-frontend
+    ports:
+      - "5173:80"  # Map localhost:5173 to container port 80 (Nginx)
+    depends_on:
+      - backend
+
+  # --- Database ---
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: rag-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ragdb
+    ports:
+      - "5432:5432"
+    volumes:
+      # CHANGE THIS LINE: from 'postgres_data' to 'data_postgres'
+      - data_postgres:/var/lib/postgresql/data
+      - ./db-init.sql:/docker-entrypoint-initdb.d/init.sql
 
 volumes:
-  postgres_data:
+  data_postgres:
