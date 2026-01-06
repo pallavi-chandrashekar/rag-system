@@ -18,3 +18,7 @@ pypdf==4.0.1
 
 # HTTP Client
 requests==2.31.0
+
+openai
+
+pypdf

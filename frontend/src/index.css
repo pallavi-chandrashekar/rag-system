@@ -76,6 +76,26 @@ html, body {
    3. COMPONENTS
    ========================================= */
 
+/* New Chat Button */
+.new-chat-btn {
+  width: 100%;
+  background-color: var(--accent);
+  color: white;
+  border: none;
+  padding: 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: bold;
+  transition: opacity 0.2s;
+}
+.new-chat-btn:hover {
+  opacity: 0.9;
+}
+
 /* Control Groups */
 .control-group {
   display: block;
@@ -182,4 +202,50 @@ html, body {
   background-color: rgba(59, 130, 246, 0.2) !important;
   color: #60a5fa !important;
   border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+/* Chat History List */
+.chat-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  flex: 1; /* Fill remaining space */
+  max-height: 40vh;
+}
+
+.chat-row {
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.2s;
+}
+
+.chat-row:hover { background: rgba(255,255,255,0.05); color: white; }
+.chat-row.active { background: var(--bg-card); color: white; border-left: 3px solid var(--accent); }
+
+/* Context Menu */
+.context-menu {
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  z-index: 1000;
+  min-width: 120px;
+}
+.context-menu div {
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.context-menu div:hover {
+  background: rgba(239, 68, 68, 0.1); /* Red tint on hover */
 }

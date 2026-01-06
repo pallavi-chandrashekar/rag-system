@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Text, ForeignKey, Integer, DateTime, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
+import datetime
 
 from pgvector.sqlalchemy import Vector
 
@@ -27,3 +28,11 @@ class Chunk(Base):
    
     
     metadata_ = Column("metadata", JSON, nullable=True)
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(String, index=True)
+    title = Column(String) # First user message usually
+    history = Column(JSON) # Stores list of messages [{"role": "user", ...}]
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)

@@ -1,277 +1,274 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { 
-  Send, Upload, Bot, User, Database, Settings, Layers, 
-  Cpu, CheckCircle, AlertCircle, Loader2, Trash2, FileText, FolderOpen 
+  Send, Upload, Bot, User, Database, Layers, 
+  Cpu, CheckCircle, AlertCircle, Loader2, Trash2, FolderOpen, FileText, PlusCircle, MessageSquare, Edit 
 } from 'lucide-react'
 import './index.css'
 
 const API_URL = "http://localhost:8000"
 
+// Native browser UUID generator
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 function App() {
   const [tenantId, setTenantId] = useState("demo-corp")
-  const [documents, setDocuments] = useState([]) // New State for Docs
+  const [sessionId, setSessionId] = useState(generateUUID()) 
+  const [chatList, setChatList] = useState([]) 
+  
+  const [documents, setDocuments] = useState([]) 
   const [query, setQuery] = useState("")
-  const [searchType, setSearchType] = useState("hybrid")
-  const [chatHistory, setChatHistory] = useState([
-    { 
-      role: 'ai', 
-      content: 'Hello! I am your Enterprise RAG assistant.\n\nI can use strategies like **Multi-Query Expansion** and **Decomposition** to answer complex questions.' 
-    }
-  ])
+  const [chatHistory, setChatHistory] = useState([{ role: 'ai', content: 'Hello! I am your AI Assistant.' }])
   const [isLoading, setIsLoading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState(null)
   
+  const [contextMenu, setContextMenu] = useState(null) 
+
   const messagesEndRef = useRef(null)
+  useEffect(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), [chatHistory])
 
-  // --- Auto Scroll ---
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  // --- 1. DEFINE HELPERS FIRST (To avoid hoisting issues) ---
+
+  const handleNewChat = () => {
+    setSessionId(generateUUID())
+    setChatHistory([{ role: 'ai', content: 'Hello! New session started.' }])
   }
-  useEffect(() => { scrollToBottom() }, [chatHistory])
 
-  // --- 1. Fetch Documents (New) ---
-  const fetchDocuments = async () => {
+  const loadChat = async (id) => {
+    setSessionId(id)
     try {
-      const response = await fetch(`${API_URL}/api/v1/documents`, {
-        headers: { "X-Tenant-ID": tenantId }
-      })
-      const data = await response.json()
-      setDocuments(data.documents || [])
-    } catch (error) {
-      console.error("Failed to fetch documents", error)
-    }
+        const res = await fetch(`${API_URL}/api/v1/chats/${id}`, { headers: { "X-Tenant-ID": tenantId } })
+        const data = await res.json()
+        if (data.history) {
+            const formatted = data.history.map(m => ({
+                role: m.role, content: m.content, strategy_used: m.strategy
+            }))
+            setChatHistory(formatted)
+        }
+    } catch (e) { console.error(e) }
   }
 
-  // Fetch docs whenever Tenant ID changes
+  // --- 2. FETCH DATA (With Auto-Restore Logic) ---
+  const fetchData = async () => {
+    try {
+        // Fetch Docs
+        const docRes = await fetch(`${API_URL}/api/v1/documents`, { headers: { "X-Tenant-ID": tenantId } });
+        const docData = await docRes.json();
+        setDocuments(docData.documents || []);
+        
+        // Fetch Chats
+        const chatRes = await fetch(`${API_URL}/api/v1/chats`, { headers: { "X-Tenant-ID": tenantId } });
+        const chatData = await chatRes.json();
+        setChatList(chatData || []);
+
+        // --- NEW: AUTO-RESTORE LAST CHAT ---
+        // If we have history, load the most recent one (index 0)
+        // If not, start a new chat.
+        if (chatData && chatData.length > 0) {
+            // Check if we are already on a valid session, if not (e.g. refresh), load the top one
+            // We simply force load the top one to be safe and consistent on refresh
+            await loadChat(chatData[0].id)
+        } else {
+            handleNewChat()
+        }
+
+    } catch (e) { console.error(e); }
+  }
+
+  // --- 3. USE EFFECT ---
+  useEffect(() => { fetchData() }, [tenantId])
+
+
+  // --- 4. ACTIONS (Rename, Delete, Send) ---
+
+  const deleteChat = async (id) => {
+    if(!confirm("Are you sure you want to delete this chat?")) return;
+    await fetch(`${API_URL}/api/v1/chats/${id}`, { method: "DELETE", headers: { "X-Tenant-ID": tenantId } })
+    
+    // Optimistic Update
+    const remainingChats = chatList.filter(c => c.id !== id)
+    setChatList(remainingChats)
+    
+    // If we deleted the active chat, switch to another or new
+    if (sessionId === id) {
+        if (remainingChats.length > 0) {
+            loadChat(remainingChats[0].id)
+        } else {
+            handleNewChat()
+        }
+    }
+    setContextMenu(null)
+  }
+
+  const renameChat = async (id, currentTitle) => {
+    const newTitle = prompt("Enter new chat name:", currentTitle);
+    if (!newTitle || !newTitle.trim()) return;
+
+    try {
+        const res = await fetch(`${API_URL}/api/v1/chats/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "X-Tenant-ID": tenantId },
+            body: JSON.stringify({ title: newTitle })
+        });
+        
+        if (res.ok) {
+            setChatList(prev => prev.map(c => c.id === id ? { ...c, title: newTitle } : c));
+        }
+    } catch (e) { console.error(e) }
+    setContextMenu(null)
+  }
+
+  const handleContextMenu = (e, chat) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, chat })
+  }
+
   useEffect(() => {
-    fetchDocuments()
-  }, [tenantId])
+    const handleClick = () => setContextMenu(null)
+    window.addEventListener('click', handleClick)
+    return () => window.removeEventListener('click', handleClick)
+  }, [])
 
-  // --- 2. Upload Document ---
-  const handleFileUpload = async (e) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-
-    setUploadStatus({ type: 'loading', msg: 'Uploading...' })
-    const formData = new FormData()
-    formData.append("file", files[0])
-
-    try {
-      const response = await fetch(`${API_URL}/api/v1/ingest`, {
-        method: "POST",
-        body: formData,
-        headers: { "X-Tenant-ID": tenantId }
-      })
-      if (response.ok) {
-        setUploadStatus({ type: 'success', msg: 'Success! Document indexed.' })
-        fetchDocuments() // Refresh list immediately after upload
-      } else {
-        setUploadStatus({ type: 'error', msg: 'Upload failed.' })
-      }
-    } catch (error) {
-      setUploadStatus({ type: 'error', msg: 'Server error.' })
-    }
-    setTimeout(() => setUploadStatus(null), 3000)
-  }
-
-  // --- 3. Delete Document (New) ---
-  const handleDeleteDocument = async (docId) => {
-    if(!confirm("Are you sure you want to delete this document?")) return;
-
-    try {
-      const response = await fetch(`${API_URL}/api/v1/documents/${docId}`, {
-        method: "DELETE",
-        headers: { "X-Tenant-ID": tenantId }
-      })
-      if (response.ok) {
-        // Remove from UI immediately (Optimistic update)
-        setDocuments(prev => prev.filter(d => d.id !== docId)) 
-      } else {
-        alert("Failed to delete document")
-      }
-    } catch (error) {
-      alert("Error deleting document")
-    }
-  }
-
-  // --- 4. Chat Handler ---
   const sendMessage = async () => {
     if (!query.trim()) return
     const userMessage = { role: 'user', content: query }
-    setChatHistory(prev => [...prev, userMessage])
+    const newHistory = [...chatHistory, userMessage]
+    setChatHistory(newHistory)
     setQuery("")
     setIsLoading(true)
 
     try {
+      const cleanHistory = newHistory.map(m => ({ role: m.role, content: m.content }))
       const response = await fetch(`${API_URL}/api/v1/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: userMessage.content,
           tenant_id: tenantId,
-          search_type: searchType
+          session_id: sessionId, 
+          chat_history: cleanHistory
         })
       })
       const data = await response.json()
       
       let botResponse = { 
         role: 'ai', 
-        content: "I couldn't find any relevant information.",
-        thoughts: data.generated_queries || []
+        content: data.answer || "No info found.",
+        strategy_used: data.strategy_used 
+      }
+      
+      if (data.results?.length > 0 && !data.answer) {
+         botResponse.content = data.results.map((r,i) => `**Src ${i+1}:** ${r.content}`).join('\n\n')
       }
 
-      if (data.results && data.results.length > 0) {
-        botResponse.content = data.results
-          .slice(0, 3) 
-          .map((r, i) => `**Source ${i + 1}** (Score: ${r.score.toFixed(2)})\n\n${r.content}`)
-          .join('\n\n---\n\n')
-      }
       setChatHistory(prev => [...prev, botResponse])
-    } catch (error) {
-      setChatHistory(prev => [...prev, { role: 'ai', content: "Error connecting to backend." }])
-    } finally {
-      setIsLoading(false)
-    }
+      
+      // Update chat list (to show new title or bump position)
+      // We manually re-fetch chat list to see the update 'updated_at'
+      const chatRes = await fetch(`${API_URL}/api/v1/chats`, { headers: { "X-Tenant-ID": tenantId } });
+      const chatData = await chatRes.json();
+      setChatList(chatData || []);
+
+    } catch (e) { console.error(e) } 
+    finally { setIsLoading(false) }
   }
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
+  const handleFileUpload = async (e) => {
+    const files = e.target.files
+    if (!files.length) return
+    setUploadStatus({type:'loading', msg:'Uploading'})
+    const fd = new FormData(); fd.append("file", files[0])
+    await fetch(`${API_URL}/api/v1/ingest`, { method: "POST", body: fd, headers: { "X-Tenant-ID": tenantId } })
+    setUploadStatus({type:'success', msg:'Done'})
+    
+    // Refresh Docs
+    const docRes = await fetch(`${API_URL}/api/v1/documents`, { headers: { "X-Tenant-ID": tenantId } });
+    const docData = await docRes.json();
+    setDocuments(docData.documents || []);
+  }
+
+  const handleDeleteDoc = async (id) => {
+    if(!confirm("Delete?")) return
+    await fetch(`${API_URL}/api/v1/documents/${id}`, { method: "DELETE", headers: { "X-Tenant-ID": tenantId } })
+    const docRes = await fetch(`${API_URL}/api/v1/documents`, { headers: { "X-Tenant-ID": tenantId } });
+    const docData = await docRes.json();
+    setDocuments(docData.documents || []);
   }
 
   return (
     <div className="app-container">
-      {/* --- Left Sidebar (Controls) --- */}
       <aside className="sidebar">
-        <div className="brand">
-          <Database size={24} />
-          <span>Enterprise RAG</span>
-        </div>
+        <div className="brand"><Database size={24}/> <span>Enterprise RAG</span></div>
+        <button className="new-chat-btn" onClick={handleNewChat}><PlusCircle size={16}/> New Chat</button>
 
-        <div className="control-group">
-          <div className="section-header"><Settings size={14}/> Strategy</div>
-          <select 
-            className="select-field" 
-            value={searchType} 
-            onChange={e => setSearchType(e.target.value)}
-          >
-            <option value="hybrid">Hybrid Search</option>
-            <option value="multi_query">Multi-Query</option>
-            <option value="decomposition">Decomposition</option>
-            <option value="hyde">HyDE</option>
-          </select>
-        </div>
-
-        <div className="control-group">
-          <div className="section-header"><Layers size={14}/> Tenant ID</div>
-          <input 
-            className="input-field" 
-            value={tenantId} 
-            onChange={e => setTenantId(e.target.value)} 
-          />
-        </div>
-
-        <div className="control-group">
-          <div className="section-header"><Upload size={14}/> Ingest</div>
-          <label className="upload-zone">
-            <input type="file" hidden onChange={handleFileUpload} />
-            <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap: 5}}>
-              <FileText size={20} />
-              <span style={{fontSize:'0.8rem'}}>Click to Upload PDF/TXT</span>
+        <div className="chat-list-section">
+            <div className="section-header" style={{marginTop:'1.5rem'}}><MessageSquare size={14}/> Recent Chats</div>
+            <div className="chat-history-list">
+                {chatList.map(chat => (
+                    <div 
+                        key={chat.id} 
+                        className={`chat-row ${chat.id === sessionId ? 'active' : ''}`}
+                        onClick={() => loadChat(chat.id)}
+                        onContextMenu={(e) => handleContextMenu(e, chat)} 
+                    >
+                        {chat.title}
+                    </div>
+                ))}
             </div>
-          </label>
-          {uploadStatus && (
-            <div className={`status-badge ${uploadStatus.type}`}>
-              {uploadStatus.type === 'loading' && <Loader2 size={14} className="animate-spin" />}
-              {uploadStatus.type === 'success' && <CheckCircle size={14} />}
-              {uploadStatus.type === 'error' && <AlertCircle size={14} />}
-              <span>{uploadStatus.msg}</span>
-            </div>
-          )}
+        </div>
+
+        <div style={{marginTop:'auto'}}>
+          <div className="control-group"><div className="section-header"><Layers size={14}/> Tenant ID</div><input className="input-field" value={tenantId} onChange={e => setTenantId(e.target.value)} /></div>
+          <div className="control-group"><label className="upload-zone"><input type="file" hidden onChange={handleFileUpload} />Upload File</label></div>
         </div>
       </aside>
 
-      {/* --- Main Chat Area --- */}
       <main className="main-area">
         <div className="messages-list">
-          {chatHistory.map((msg, idx) => (
-            <div key={idx} className="message-item">
-              <div className={`avatar ${msg.role}`}>
-                {msg.role === 'ai' ? <Bot size={20} /> : <User size={20} />}
-              </div>
-              <div className="message-content">
-                {msg.thoughts && msg.thoughts.length > 0 && (
-                  <div className="thought-process">
-                    <div className="section-header" style={{marginBottom: '0.5rem'}}>
-                      <Cpu size={14} /> AI Strategy: {searchType.replace('_', ' ').toUpperCase()}
-                    </div>
-                    <ul style={{margin:0, paddingLeft:20, color:'var(--text-secondary)'}}>
-                      {msg.thoughts.map((t, i) => <li key={i}>{t}</li>)}
-                    </ul>
-                  </div>
-                )}
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
-              </div>
-            </div>
+          {chatHistory.map((msg, i) => (
+             <div key={i} className="message-item">
+                <div className={`avatar ${msg.role}`}>{msg.role==='ai'?<Bot size={20}/>:<User size={20}/>}</div>
+                <div className="message-content">
+                    {msg.strategy_used && <div className="thought-process">Strategy: {msg.strategy_used}</div>}
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                </div>
+             </div>
           ))}
-          {isLoading && (
-            <div className="message-item">
-              <div className="avatar ai"><Bot size={20}/></div>
-              <div className="message-content animate-pulse">Thinking...</div>
-            </div>
-          )}
+          {isLoading && <div className="message-item"><div className="avatar ai"><Bot size={20}/></div><div className="message-content">Thinking...</div></div>}
           <div ref={messagesEndRef} />
         </div>
-
         <div className="input-area">
-          <div className="input-wrapper">
-            <input 
-              value={query} 
-              onChange={e => setQuery(e.target.value)} 
-              onKeyDown={handleKeyPress}
-              placeholder="Ask a question about your documents..."
-              disabled={isLoading}
-            />
-            <button className="send-btn" onClick={sendMessage} disabled={isLoading || !query.trim()}>
-              <Send size={18} />
-            </button>
-          </div>
+          <div className="input-wrapper"><input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendMessage()}/><button className="send-btn" onClick={sendMessage}><Send size={18}/></button></div>
         </div>
       </main>
 
-      {/* --- Right Sidebar (Documents) --- */}
       <aside className="docs-sidebar">
-        <div className="section-header">
-          <FolderOpen size={14}/> Knowledge Base
-        </div>
-        
-        {documents.length === 0 ? (
-          <div style={{textAlign:'center', color:'var(--text-secondary)', fontSize:'0.85rem', marginTop: 20}}>
-            No documents found for this tenant.
-          </div>
-        ) : (
-          documents.map(doc => (
-            <div key={doc.id} className="doc-item">
-              <div className="doc-info">
-                <span className="doc-name" title={doc.filename}>{doc.filename}</span>
-                <span className="doc-date">{doc.created_at}</span>
-              </div>
-              <button 
-                className="delete-btn" 
-                onClick={() => handleDeleteDocument(doc.id)}
-                title="Delete Document"
-              >
-                <Trash2 size={16} />
-              </button>
+        <div className="section-header"><FolderOpen size={14}/> Knowledge Base</div>
+        {documents.map(d => (
+            <div key={d.id} className="doc-item">
+                <span className="doc-name">{d.filename}</span>
+                <button className="delete-btn" onClick={() => handleDeleteDoc(d.id)}><Trash2 size={16}/></button>
             </div>
-          ))
-        )}
+        ))}
       </aside>
+
+      {contextMenu && (
+        <div className="context-menu" style={{top: contextMenu.y, left: contextMenu.x}}>
+            <div onClick={() => renameChat(contextMenu.chat.id, contextMenu.chat.title)} style={{display:'flex', alignItems:'center', gap:5}}>
+                <Edit size={14}/> Rename
+            </div>
+            <div onClick={() => deleteChat(contextMenu.chat.id)} style={{color:'var(--danger)', display:'flex', alignItems:'center', gap:5}}>
+                <Trash2 size={14}/> Delete
+            </div>
+        </div>
+      )}
     </div>
   )
 }
-
 export default App
