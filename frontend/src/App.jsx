@@ -157,12 +157,15 @@ function App() {
       })
       const data = await response.json()
       
-      let botResponse = { 
-        role: 'ai', 
+      let botResponse = {
+        role: 'ai',
         content: data.answer || "No info found.",
-        strategy_used: data.strategy_used 
+        strategy_used: data.strategy_used || data.mode,
+        confidence: data.confidence,
+        latency_ms: data.latency_ms,
+        sources: data.sources || []
       }
-      
+
       if (data.results?.length > 0 && !data.answer) {
          botResponse.content = data.results.map((r,i) => `**Src ${i+1}:** ${r.content}`).join('\n\n')
       }
@@ -235,8 +238,31 @@ function App() {
              <div key={i} className="message-item">
                 <div className={`avatar ${msg.role}`}>{msg.role==='ai'?<Bot size={20}/>:<User size={20}/>}</div>
                 <div className="message-content">
-                    {msg.strategy_used && <div className="thought-process">Strategy: {msg.strategy_used}</div>}
+                    {msg.role === 'ai' && (msg.strategy_used || msg.confidence != null) && (
+                      <div className="answer-meta">
+                        {msg.strategy_used && <span className="meta-badge">Mode: {msg.strategy_used}</span>}
+                        {msg.confidence != null && (
+                          <span className={`meta-badge confidence ${msg.confidence >= 0.55 ? 'high' : 'low'}`}>
+                            Confidence: {(msg.confidence * 100).toFixed(0)}%
+                          </span>
+                        )}
+                        {msg.latency_ms != null && <span className="meta-badge">{msg.latency_ms} ms</span>}
+                      </div>
+                    )}
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    {msg.sources?.length > 0 && (
+                      <div className="citations">
+                        <div className="citations-title"><FileText size={13}/> Sources</div>
+                        {msg.sources.map((s, idx) => (
+                          <div key={s.chunk_id || idx} className="citation-item">
+                            <span className="citation-index">[{idx + 1}]</span>
+                            <span className="citation-file">{s.filename}</span>
+                            <span className="citation-score">score {(s.retrieval_score ?? s.combined_score ?? 0).toFixed(3)}</span>
+                            <div className="citation-snippet">{s.text_snippet}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                 </div>
              </div>
           ))}

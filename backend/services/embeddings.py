@@ -1,23 +1,32 @@
-from sentence_transformers import SentenceTransformer
+"""Local embedding generation (sentence-transformers).
 
-# Load the local model (384 dimensions)
-# It downloads automatically on the first run
-print("Loading Local Embedding Model (all-MiniLM-L6-v2)...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
+The model is loaded lazily on first use so that importing this module (and the
+services that depend on it) stays cheap and dependency-free for unit tests and
+tooling. Only `get_embeddings` requires the heavy `sentence-transformers`
+dependency and downloads the model on first call.
+"""
+
+from backend.config import settings
+
+_model = None
+
+
+def _get_model():
+    """Load and cache the embedding model on first use."""
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+
+        print(f"Loading Local Embedding Model ({settings.LOCAL_EMBEDDING_MODEL})...")
+        _model = SentenceTransformer(settings.LOCAL_EMBEDDING_MODEL)
+    return _model
+
 
 def get_embeddings(texts: list) -> list:
-    """
-    Generates embeddings locally using the CPU/GPU.
-    Returns: List of Lists (e.g., [[0.1, ...], [0.3, ...]])
-    """
+    """Generate embeddings locally. Returns a list of float lists."""
     if not texts:
         return []
-        
-    # Clean newlines just in case
+
     cleaned_texts = [t.replace("\n", " ") for t in texts]
-    
-    # Generate embeddings
-    embeddings = model.encode(cleaned_texts)
-    
-    # Convert numpy array to standard Python list for JSON serialization
+    embeddings = _get_model().encode(cleaned_texts)
     return embeddings.tolist()
