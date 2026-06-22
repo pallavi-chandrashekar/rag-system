@@ -4,15 +4,20 @@ from sqlalchemy import text
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import datetime
+import logging
+import time
 import uuid
 
+from backend.config import settings
 from backend.database import get_db
 from backend.models import ChatSession # <--- Import New Model
-from backend.services.rag import hybrid_search, multi_query_search
 from backend.services.chat import rewrite_query, generate_multi_queries, decompose_query
 from backend.services.ingestion import process_document
 from backend.services.router import route_query
-from backend.services.llm import chat_with_llm
+from backend.services.llm import chat_with_llm, generate_grounded_answer
+from backend.services.retrieval_service import retrieval_service
+
+logger = logging.getLogger("rag.api")
 
 router = APIRouter()
 
@@ -25,94 +30,144 @@ class SearchPayload(BaseModel):
 class RenameChatPayload(BaseModel):
     title: str
 
-# --- 1. SEARCH (Now Saves History) ---
+# --- 1. SEARCH (Grounded RAG + history persistence) ---
 @router.post("/api/v1/search")
 async def search_rag(payload: SearchPayload, db: Session = Depends(get_db)):
-    query_text = payload.text.strip()
-    
-    # --- ROUTING LOGIC ---
-    q_lower = query_text.lower()
-    strategy = "hybrid"
-    summary_triggers = ["summarize", "summary", "tldr", "overview"]
-    
-    if q_lower in summary_triggers or any(q_lower.startswith(s) for s in summary_triggers):
-        strategy = "summary"
-    elif any(x in q_lower for x in ["hi", "hello", "hey", "how are you"]):
-        strategy = "llm_only"
-    else:
-        strategy = route_query(query_text)
+    """Grounded, tenant-scoped RAG.
 
-    # --- EXECUTE STRATEGY ---
+    Modes (Step 7): ``LLM_ONLY``, ``SUMMARY``, ``SEARCH`` (hybrid retrieval).
+    Returns a citation-rich response with confidence + observability metadata.
+    """
+    started = time.perf_counter()
+    query_text = payload.text.strip()
+    tenant_id = payload.tenant_id
+
+    # --- ROUTING ---------------------------------------------------------
+    q_lower = query_text.lower()
+    summary_triggers = ["summarize", "summary", "tldr", "overview"]
+    if q_lower in summary_triggers or any(q_lower.startswith(s) for s in summary_triggers):
+        mode = "summary"
+    elif any(x in q_lower for x in ["hi", "hello", "hey", "how are you"]):
+        mode = "llm_only"
+    else:
+        mode = route_query(query_text)
+
     answer = ""
-    results = []
-    
-    if strategy == "llm_only":
-        msgs = [{"role": ("assistant" if m["role"]=="ai" else "user"), "content": m["content"]} for m in payload.chat_history]
+    sources: List[Dict] = []
+    confidence = 0.0
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    # --- EXECUTE ---------------------------------------------------------
+    if mode == "llm_only":
+        msgs = [{"role": ("assistant" if m["role"] == "ai" else "user"), "content": m["content"]} for m in payload.chat_history]
         msgs.append({"role": "user", "content": query_text})
         answer = chat_with_llm(msgs)
-    
-    elif strategy == "summary":
-        docs = db.execute(text("SELECT content FROM chunks WHERE tenant_id = :tid LIMIT 15"), {"tid": payload.tenant_id}).fetchall()
+
+    elif mode == "summary":
+        docs = db.execute(
+            text("SELECT content FROM chunks WHERE tenant_id = :tid LIMIT 15"),
+            {"tid": tenant_id},
+        ).fetchall()
         if docs:
             combined = "\n\n".join([r.content for r in docs])
             answer = chat_with_llm([{"role": "user", "content": f"Summarize:\n{combined}"}])
         else:
-            answer = "No documents found to summarize."
+            answer = settings.UNKNOWN_ANSWER_TEXT if settings.RAG_ENABLE_UNKNOWN_ANSWER else "No documents found to summarize."
 
     else:
-        # Search Strategy
+        mode = "hybrid" if settings.RAG_ENABLE_HYBRID_RETRIEVAL else "vector"
+        # Contextual rewrite for follow-up questions.
         standalone_query = query_text
         if payload.chat_history:
             standalone_query = rewrite_query(query_text, payload.chat_history)
-        
-        if strategy == "multi_query":
-            q_list = generate_multi_queries(standalone_query)
-            results = multi_query_search(db, q_list, payload.tenant_id)
-        else:
-            results = hybrid_search(db, standalone_query, payload.tenant_id)
-            
-        if not results:
-            # Fallback
-            msgs = [{"role": ("assistant" if m["role"]=="ai" else "user"), "content": m["content"]} for m in payload.chat_history]
-            msgs.append({"role": "user", "content": query_text})
-            answer = chat_with_llm(msgs)
-            strategy = "llm_fallback"
 
-    # --- SAVE HISTORY TO DB ---
+        retrieved = retrieval_service.retrieve(db, standalone_query, tenant_id)
+        confidence = retrieval_service.confidence(retrieved)
+
+        # --- Unknown-answer handling (Step 6): no chunks OR low confidence ---
+        grounded = (
+            retrieved
+            and not (
+                settings.RAG_ENABLE_UNKNOWN_ANSWER
+                and confidence < settings.RAG_MIN_CONFIDENCE_SCORE
+            )
+        )
+        if grounded:
+            filenames = retrieval_service.lookup_filenames(
+                db, [r["document_id"] for r in retrieved]
+            )
+            sources = retrieval_service.format_sources(retrieved, tenant_id, filenames)
+            answer, token_usage = generate_grounded_answer(
+                standalone_query, sources, payload.chat_history
+            )
+            # Drop citations if the model abstained anyway.
+            if answer.strip() == settings.UNKNOWN_ANSWER_TEXT:
+                sources = []
+                mode = "unknown"
+        else:
+            answer = (
+                settings.UNKNOWN_ANSWER_TEXT
+                if settings.RAG_ENABLE_UNKNOWN_ANSWER
+                else "No relevant information was found in your documents."
+            )
+            mode = "unknown"
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    # --- OBSERVABILITY (Step 10) -----------------------------------------
+    logger.info(
+        "rag_query tenant=%s mode=%s retrieval_count=%d selected_sources=%d "
+        "confidence=%.3f model=%s latency_ms=%d tokens=%d",
+        tenant_id, mode, len(sources), len(sources), confidence,
+        settings.OPENAI_CHAT_MODEL, latency_ms, token_usage.get("total_tokens", 0),
+    )
+
+    # Legacy field consumed by older frontend builds.
+    legacy_results = [
+        {"id": s["chunk_id"], "content": s["text_snippet"], "score": s["combined_score"]}
+        for s in sources
+    ]
+
+    # --- SAVE HISTORY ----------------------------------------------------
     if payload.session_id:
-        # Get or Create Session
         session = db.query(ChatSession).filter(ChatSession.id == payload.session_id).first()
         if not session:
             session = ChatSession(
-                id=payload.session_id, 
-                tenant_id=payload.tenant_id, 
+                id=payload.session_id,
+                tenant_id=tenant_id,
                 title=query_text[:30] + "...",
-                history=[]
+                history=[],
             )
             db.add(session)
-        
-        # Update History
         new_history = list(session.history) if session.history else []
         new_history.append({"role": "user", "content": query_text})
-        
-        # If we have results, format them into the answer for storage
-        final_response = answer
-        if not final_response and results:
-             # If no direct LLM answer but we have results, just store a placeholder or the first result
-             # Usually frontend constructs the view, but for storage we should be explicit.
-             # For now, let's just store a generic "See results" or the raw answer if exists.
-             final_response = answer if answer else "Here are the search results."
-
-        new_history.append({"role": "ai", "content": final_response, "strategy": strategy, "results": [r['content'] for r in results[:1]]}) # Store minimal result data
-        
+        new_history.append(
+            {
+                "role": "ai",
+                "content": answer or "Here are the search results.",
+                "strategy": mode,
+                "confidence": confidence,
+                "sources": [
+                    {"filename": s["filename"], "chunk_index": s["chunk_index"]}
+                    for s in sources
+                ],
+            }
+        )
         session.history = new_history
         session.updated_at = datetime.datetime.utcnow()
         db.commit()
 
     return {
         "answer": answer,
-        "results": results,
-        "strategy_used": strategy
+        "sources": sources,
+        "confidence": confidence,
+        "mode": mode,
+        "tenant_id": tenant_id,
+        "latency_ms": latency_ms,
+        "token_usage": token_usage,
+        # --- Backwards-compatible fields ---
+        "results": legacy_results,
+        "strategy_used": mode,
     }
 
 # ---  LIST CHATS ---

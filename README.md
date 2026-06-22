@@ -1,170 +1,241 @@
-# 🏢 Multi-Tenant Enterprise RAG Platform
+# Enterprise RAG Reference Architecture
 
-A production-ready, multi-tenant Retrieval-Augmented Generation (RAG) system built with **FastAPI**, **React**, **PostgreSQL (pgvector)**, and **OpenAI**.
+A production-style, multi-tenant **Retrieval-Augmented Generation (RAG)**
+reference implementation built with **FastAPI**, **React**, **PostgreSQL +
+pgvector**, and a pluggable LLM/embedding layer.
 
-This platform features an **Agentic Router** that automatically detects user intent (Greetings vs. Summarization vs. Deep Search) and supports full **Chat Session Management** with strict data isolation between tenants.
+It is designed to demonstrate the engineering practices that separate a demo
+from a deployable system: **grounded answers with citations**, **strict
+multi-tenant isolation**, **hybrid retrieval**, **abstention on low
+confidence**, **observability**, and a built-in **evaluation harness**.
 
-![Project Status](https://img.shields.io/badge/status-production--ready-green) ![License](https://img.shields.io/badge/license-MIT-blue)
-
-## ✨ Key Features
-
-### 🧠 Intelligent Agent (Auto-Router)
-- **Intent Detection:** Automatically classifies queries into strategies:
-  - `LLM_ONLY`: For greetings and general knowledge (e.g., "Hi", "What is Python?").
-  - `SUMMARY`: Bypasses vector search to read raw document chunks for full overviews.
-  - `SEARCH`: Performs vector similarity search for specific questions.
-- **Fail-Safe Fallback:** If the vector database returns zero results, the system automatically falls back to the LLM's general knowledge.
-
-### 🔐 Enterprise Security
-- **Multi-Tenancy:** Strict data isolation. `Tenant A` cannot access documents or chat history belonging to `Tenant B`.
-- **Tenant Scoping:** All API requests are scoped via the `X-Tenant-ID` header.
-
-### 📂 Advanced Ingestion
-- **PDF Parsing:** Integrated `pypdf` extraction to handle complex PDF layouts.
-- **Smart Chunking:** Sentence-aware text splitting (`RecursiveCharacterTextSplitter` logic) to preserve semantic context.
-
-### 💬 Session Management
-- **Persistent History:** Conversations are saved to PostgreSQL (`chat_sessions` table).
-- **Context Menu:** Right-click sidebar items to **Rename** or **Delete** specific chat sessions.
-- **Auto-Restore:** Automatically loads the most recent conversation upon browser refresh.
+![status](https://img.shields.io/badge/status-reference--architecture-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## 🏗️ Architecture
+## Overview
 
-The system uses a **Router-Based RAG** architecture. The "Brain" (Router) decides the best tool for the job before any search happens.
+The system answers questions over a tenant's uploaded documents. An intent
+router decides whether to chat directly, summarize, or run retrieval. For
+retrieval queries it performs tenant-scoped **hybrid search**, generates an
+answer **grounded only in the retrieved context**, returns **citations** and a
+**confidence score**, and **abstains** ("I don't know based on the available
+documents.") when it cannot ground an answer.
 
-```mermaid
-graph TD
-    %% -- Client Layer --
-    User[User / React UI] -->|Sends Query + TenantID| API[FastAPI Backend]
+```
+React UI ──X-Tenant-ID──▶ FastAPI ──▶ Router ──▶ Retrieval (vector+keyword, tenant-scoped)
+                                          │            │
+                                          └─▶ Grounded LLM ◀── ranked, cited context
+                                                       │
+                              PostgreSQL + pgvector (documents / chunks / chat_sessions)
+```
 
-    %% -- Application Layer --
-    subgraph Backend Services
-        API --> Router{Router Agent}
-        
-        %% Strategy 1: General Chat
-        Router -- "Hi / General" --> LLM_Only[LLM Direct Chat]
-        
-        %% Strategy 2: Summarization
-        Router -- "Summarize" --> DB_Raw[Fetch Raw Content]
-        DB_Raw --> LLM_Sum[LLM Summarizer]
-        
-        %% Strategy 3: Search (RAG)
-        Router -- "Complex Query" --> Embed[Embedding Model]
-        Embed --> VectorSearch[Vector Search]
-        VectorSearch --> Rerank[Context Assembly]
-        Rerank --> LLM_RAG[LLM Answer Gen]
-    end
+See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
-    %% -- Data Layer --
-    subgraph Database [PostgreSQL]
-        VectorDB[(pgvector: Chunks)]
-        SessionDB[(Table: Chat_Sessions)]
-    end
+---
 
-    %% -- Connections --
-    VectorSearch <--> VectorDB
-    DB_Raw <--> VectorDB
-    
-    %% -- History Management --
-    API -->|Save History| SessionDB
-    SessionDB -->|Load History| API
+## Features
 
-    %% -- External AI --
-    LLM_Only <--> OpenAI
-    LLM_Sum <--> OpenAI
-    LLM_RAG <--> OpenAI
+- 🧠 **Intent router** — `LLM_ONLY`, `SUMMARY`, `SEARCH` modes.
+- 🔎 **Hybrid retrieval** — weighted vector + keyword fusion, tenant-scoped.
+- 📌 **Grounded answers + citations** — every answer cites the chunks it used.
+- 🤷 **Abstention** — returns "I don't know..." on no/low-confidence retrieval.
+- 🔐 **Multi-tenancy** — strict per-tenant isolation at the database layer.
+- 📊 **Observability** — latency, retrieval counts, confidence, model, tokens.
+- 🧪 **Evaluation harness** — citation rate, groundedness, unknown accuracy.
+- 💬 **Persistent chat sessions** with rename/delete.
+- 📂 **PDF/TXT/MD ingestion** with sentence-aware chunking.
 
+---
+
+## Tech Stack
+
+| Layer        | Technology                                        |
+| ------------ | ------------------------------------------------- |
+| Frontend     | React + Vite                                      |
+| Backend      | FastAPI (Python), SQLAlchemy                       |
+| Database     | PostgreSQL + `pgvector`                            |
+| Embeddings   | `sentence-transformers` (local) or OpenAI         |
+| Generation   | OpenAI chat models (`gpt-4o-mini` default)         |
+| Ingestion    | `pypdf`, sentence-aware chunker                    |
+
+---
+
+## Quick Start
+
+### Prerequisites
+- Docker + Docker Compose
+- An OpenAI API key (used for generation; embeddings run locally by default)
+
+### Configure
+```bash
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY
+```
+
+### Run
+```bash
+docker-compose up -d --build
+```
+
+- Frontend: http://localhost:5173
+- API docs: http://localhost:8000/docs
+
+### Try it
+1. Enter a Tenant ID (e.g. `demo-corp`) in the sidebar.
+2. Upload a sample doc from [`data/sample_documents/`](data/sample_documents/).
+3. Ask: *"What is the remote work policy?"* — see the grounded answer, its
+   confidence, latency, and citations.
+4. Ask something off-topic — the system abstains instead of guessing.
+
+---
+
+## Multi-Tenancy
+
+Every `document`, `chunk`, and `chat_session` is owned by a `tenant_id`. All
+retrieval and read queries are filtered by `tenant_id` at the SQL layer, so one
+tenant can never read another tenant's data. Requests are scoped via the
+`X-Tenant-ID` header. There is no cross-tenant read path in the codebase, which
+the test suite asserts directly.
+
+---
+
+## Hybrid Retrieval
+
+Retrieval fuses two tenant-scoped signals into a single ranking score:
+
+```
+combined_score = RAG_VECTOR_WEIGHT * vector_score      # cosine similarity
+               + RAG_KEYWORD_WEIGHT * keyword_score     # lexical overlap
+                                                        # defaults: 0.7 / 0.3
+```
+
+- **Vector** candidates come from pgvector cosine search above a similarity
+  floor.
+- **Keyword** candidates come from Postgres full-text search, so exact-term
+  matches surface even when embeddings miss them.
+- `confidence` = the best `combined_score`, which gates abstention.
+
+Tunable via `RAG_VECTOR_WEIGHT`, `RAG_KEYWORD_WEIGHT`, `RAG_VECTOR_FLOOR`,
+`RAG_TOP_K`, and `RAG_MIN_CONFIDENCE_SCORE`.
+
+---
+
+## Responsible AI
+
+Implemented (not just documented) — see
+[`docs/responsible-ai.md`](docs/responsible-ai.md):
+
+- **Tenant isolation** enforced at the data layer.
+- **Grounded generation** — answers use only retrieved context.
+- **Citations** for auditability.
+- **Abstention** on low confidence.
+- **Minimal logging** — metadata only, never raw answers or document text.
+
+---
+
+## Evaluation
+
+`backend/evaluation/evaluator.py` provides an offline harness that scores:
+
+- **citation_rate** — answered queries that carry ≥ 1 source
+- **avg_source_count** — citations per answer
+- **unknown_answer_accuracy** — correct abstention on out-of-scope queries
+- **avg_relevance** — expected-keyword coverage
+- **avg_groundedness** — answer terms supported by cited sources
+
+Run against a live stack:
+```bash
+RAG_BASE_URL=http://localhost:8000 RAG_EVAL_TENANT=demo-corp \
+  python -m backend.evaluation.evaluator
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## Observability
 
-| Component | Technology | Description |
+Every query emits a structured log line:
+
+```
+rag_query tenant=demo-corp mode=hybrid retrieval_count=5 selected_sources=5 \
+  confidence=0.812 model=gpt-4o-mini latency_ms=734 tokens=512
+```
+
+The API response also returns `latency_ms`, `confidence`, and `token_usage` so
+clients can display and audit per-answer cost and quality. These fields map
+directly onto OpenTelemetry spans/metrics (roadmap).
+
+---
+
+## Configuration
+
+All behaviour is environment-driven (see [`.env.example`](.env.example)):
+
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| **Frontend** | React + Vite | Fast, modern UI with Sidebar and Context Menus. |
-| **Backend** | FastAPI (Python) | High-performance async API. |
-| **Database** | PostgreSQL | Relational data + `pgvector` for embeddings. |
-| **ORM** | SQLAlchemy | Database interaction and model management. |
-| **AI / LLM** | OpenAI GPT-4o | Intelligence layer (Routing & Generation). |
-| **Ingestion** | pypdf | Robust PDF text extraction. |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | Generation model |
+| `EMBEDDING_PROVIDER` | `local` | `local` or `openai` |
+| `RAG_TOP_K` | `5` | Chunks retrieved |
+| `RAG_MIN_CONFIDENCE_SCORE` | `0.55` | Abstention threshold |
+| `RAG_ENABLE_HYBRID_RETRIEVAL` | `true` | Hybrid vs vector-only |
+| `RAG_ENABLE_UNKNOWN_ANSWER` | `true` | Abstention on/off |
+| `RAG_ENABLE_CITATIONS` | `true` | Return sources |
+| `RAG_VECTOR_WEIGHT` / `RAG_KEYWORD_WEIGHT` | `0.7` / `0.3` | Fusion weights |
 
 ---
 
-## 🚀 Quick Start
-
-### 1. Prerequisites
-
-* **Docker** & **Docker Compose** installed.
-* An **OpenAI API Key**.
-
-### 2. Configuration
-
-Create a `.env` file or update your `docker-compose.yml` directly:
-
-```yaml
-services:
-  rag-backend:
-    environment:
-      - DATABASE_URL=postgresql://user:password@rag-db:5432/ragdb
-      - OPENAI_API_KEY=sk-proj-YOUR-ACTUAL-KEY-HERE  # <--- Required
-
-```
-
-### 3. Build & Run
+## Tests
 
 ```bash
-# Stop any existing containers
-docker-compose down
-
-# Build and start the system
-docker-compose up -d --build
-
+pip install pytest sqlalchemy pydantic
+pytest tests -v -m "not integration"
 ```
 
-### 4. Access the App
-
-* **Frontend:** [http://localhost:5173](https://www.google.com/search?q=http://localhost:5173)
-* **API Documentation:** [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)
-
----
-
-## 📖 Usage Guide
-
-### 1. Managing Tenants
-
-* Enter a **Tenant ID** (e.g., `demo-corp`) in the sidebar.
-* The system creates a virtual wall; documents uploaded here are invisible to other Tenant IDs.
-
-### 2. Ingesting Documents
-
-* Click the **"Upload File"** area in the sidebar.
-* Select a `.pdf` or `.txt` file.
-* The system parses, chunks, embeds, and stores it in seconds.
-
-### 3. Chat Modes
-
-* **General Chat:** Type *"Hi"* or *"How are you?"*. The Agent skips the database and replies instantly.
-* **Summarization:** Type *"Summarize this document"*. The Agent pulls raw text chunks and generates a summary.
-* **Deep Search:** Ask a specific question (e.g., *"What is the revenue for Q3?"*). The Agent performs a vector search.
-
-### 4. Managing Sessions
-
-* **New Chat:** Click the `+ New Chat` button to start fresh.
-* **Rename:** Right-click a chat in the history list -> Select **Rename**.
-* **Delete:** Right-click a chat -> Select **Delete** to wipe it from the database.
+Unit tests cover hybrid retrieval scoring, citation formatting, the
+unknown-answer decision, and tenant-isolation scoping. CI runs them on every
+push (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ---
 
-## 🔮 Future Roadmap
+## Roadmap
 
-* [ ] **Authentication:** Replace manual Tenant ID entry with JWT Login.
-* [ ] **OCR Support:** Integrate `pytesseract` for scanned image PDFs.
-* [ ] **Streaming:** Implement Server-Sent Events (SSE) for typewriter-style responses.
-* [ ] **File Filtering:** Allow users to chat with a *specific* file only.
+- [ ] **JWT authentication** to bind users to tenants
+- [ ] **RBAC** for document- and action-level authorization
+- [ ] **Kubernetes** manifests + Helm chart for production deployment
+- [ ] **HANA Vector adapter** (pluggable vector store interface)
+- [ ] **OpenTelemetry** traces/metrics export
+- [ ] **RAGAS** integration for richer offline evaluation
+- [ ] Streaming (SSE) responses and per-file chat scoping
 
-## 🛡️ License
+---
 
-This project is licensed under the MIT License.
+## Resume Bullets
+
+- Designed and built a **multi-tenant RAG reference architecture** (FastAPI,
+  React, PostgreSQL/pgvector) with strict per-tenant data isolation enforced at
+  the database layer.
+- Implemented **hybrid retrieval** (weighted vector + keyword fusion) with a
+  confidence-gated **abstention** path, eliminating ungrounded answers.
+- Engineered **grounded generation with citations** and a structured **response
+  contract** (answer, sources, confidence, latency, token usage) for full
+  auditability.
+- Added an **offline evaluation harness** (citation rate, groundedness,
+  unknown-answer accuracy) and **observability** instrumentation, wired into
+  **CI**.
+
+---
+
+## Why a Reference Architecture?
+
+This project is a reusable reference architecture that codifies
+**responsible, grounded, multi-tenant RAG** patterns — applicable across
+enterprises adopting LLM systems. It emphasizes the durable engineering
+concerns (isolation, evaluation, observability, abstention) rather than a
+single application, so teams can adapt the patterns to their own stack.
+
+---
+
+## License
+
+MIT.
